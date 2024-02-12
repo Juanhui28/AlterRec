@@ -37,131 +37,6 @@ class Session_Encoder(torch.nn.Module):
         return self.transformer_encoder(input_embs, log_mask, att_mask)
 
 
-class GCN(torch.nn.Module):
-    def __init__(self, node_num,  id_in_channels, lm_in_channels, out_channels, num_layers,
-                 dropout, args, feat=None):
-        super(GCN, self).__init__()
-
-        self.convs = torch.nn.ModuleList()
-        self.emb = torch.nn.Embedding(node_num, id_in_channels)
-        self.layer = num_layers
-       
-        if num_layers == 1:
-            self.convs.append(GCNConv(id_in_channels, out_channels))
-
-        elif num_layers > 1:
-            self.convs.append(GCNConv(id_in_channels, out_channels))
-            
-            for _ in range(num_layers - 2):
-                self.convs.append(
-                    GCNConv(out_channels, out_channels))
-            self.convs.append(GCNConv(out_channels, out_channels))
-
-        self.dropout = dropout
-        self.use_text = args.text_input_gnn
-        # self.p = args
-        self.linearlayer1 = torch.nn.Linear(id_in_channels+lm_in_channels, id_in_channels)
-        # self.linearlayer1 = torch.nn.Linear(id_in_channels*2, id_in_channels)
-       
-        self.invest = 1
-        self.feat = feat
-
-    def reset_parameters(self):
-        for conv in self.convs:
-            conv.reset_parameters()
-        self.emb.reset_parameters()
-       
-        self.linearlayer1.reset_parameters()
-     
-    def concat_item_feat(self, item_emb, x):
-        xx = torch.cat([item_emb, x], dim=1)
-
-        new_item = self.linearlayer1(xx)
-        
-        # new_item = F.relu(new_item)
-        # new_item = F.dropout(new_item, p=self.dropout, training=self.training)
-
-        # new_item = item_emb + x
-
-        return new_item
-    
-    def get_gnn_emb(self,adj_t,  x, mode):
-        if mode == 'gnn':
-            x = self.emb.weight
-        else:
-            item_num = x.size(0)
-            useremb = self.emb.weight[item_num:]
-            x = torch.cat([x, useremb], dim=0)
-
-
-        for conv in self.convs[:-1]:
-            x = conv(x, adj_t)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-
-       
-        x = self.convs[-1](x, adj_t)
-        
-
-        if self.layer == 1:
-            x = F.dropout(x, p=self.dropout, training=self.training)
-        
-
-        return x
-
-
-    def forward(self, adj_t, feat=None):
-        
-        
-        
-        emb = self.emb.weight
-
-
-        ######### with input feature
-        if self.use_text:
-            item_num = feat.size(0)
-            if self.invest == 1:
-                print('use text as input in gcn')
-            useremb = emb[item_num:]
-            # x = torch.cat([feat, useremb], dim=0)
-
-            itememb = emb[:item_num]
-            new_item = self.concat_item_feat(itememb, feat)
-            x = torch.cat([new_item, useremb], dim=0)
-
-
-
-        ######### no input feature
-        else:
-            x = emb
-        for conv in self.convs[:-1]:
-            x = conv(x, adj_t)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-
-        # if self.layer == 1:
-        #     # print('dropout no text')
-        #     x = F.dropout(x, p=self.dropout, training=self.training)
-        
-
-        # x = self.convs[-1](x, adj_t)
-        try:
-            x = self.convs[-1](x, adj_t)
-        except:
-            
-            print(1)
-
-
-        if self.layer == 1:
-            # print('dropout no text')
-            x = F.dropout(x, p=self.dropout, training=self.training)
-        
-
-        self.invest = 0
-
-        return x
-    
-
     
 class ID_module(nn.Module):
    
@@ -272,7 +147,7 @@ class Text_module(nn.Module):
 class AlterRec(nn.Module):
    
     def __init__(self, node_num, item_num, id_in_channels, lm_in_channels, out_channels, num_layers,
-                 dropout, args,  feat=None, item_prob_list=None, train_edge=None ):
+                 dropout, args,  feat=None, item_prob_list=None):
         super(AlterRec, self).__init__()
 
         # self.convs = torch.nn.ModuleList()
@@ -295,7 +170,7 @@ class AlterRec(nn.Module):
         self.linearlayer = torch.nn.Linear(2, 1)
 
         
-        self.edge_index = train_edge
+       
         
         
        
@@ -321,49 +196,49 @@ class AlterRec(nn.Module):
 
         return new_item
     
-    def scaled_dot_product(self, q, k, v, edge_index, dim_size, mask= None):
-        d = q.size()[-1]
+    # def scaled_dot_product(self, q, k, v, edge_index, dim_size, mask= None):
+    #     d = q.size()[-1]
 
-        attn_logits = (q*k).sum(dim=-1)
-        attn_logits = attn_logits/math.sqrt(d)
+    #     attn_logits = (q*k).sum(dim=-1)
+    #     attn_logits = attn_logits/math.sqrt(d)
 
-        attention = softmax(attn_logits, edge_index[0])
-        values = attention.unsqueeze(1)*v
-        values = scatter_add(values, edge_index[0], dim=0, dim_size=dim_size)
+    #     attention = softmax(attn_logits, edge_index[0])
+    #     values = attention.unsqueeze(1)*v
+    #     values = scatter_add(values, edge_index[0], dim=0, dim_size=dim_size)
        
 
-        return values, attention
+    #     return values, attention
     
    
         
-    def cross_att(self, item_gnn_emb, x):
+    # def cross_att(self, item_gnn_emb, x):
         
-        d = item_gnn_emb.size()[-1]
-        x = self.map_feat(x, self.linearlayer1)
-        combine_emb = item_gnn_emb * x
+    #     d = item_gnn_emb.size()[-1]
+    #     x = self.map_feat(x, self.linearlayer1)
+    #     combine_emb = item_gnn_emb * x
 
-    def get_batch_logit(self, item_emb, mask, itemid, max_itemid):
+    # def get_batch_logit(self, item_emb, mask, itemid, max_itemid):
 
         
 
-        seq_emb = torch.sum(mask.unsqueeze(2)*item_emb[itemid], 1)
-        seq_emb = seq_emb/(mask.sum(dim=1)).unsqueeze(1)
+    #     seq_emb = torch.sum(mask.unsqueeze(2)*item_emb[itemid], 1)
+    #     seq_emb = seq_emb/(mask.sum(dim=1)).unsqueeze(1)
 
-        scores = torch.matmul(seq_emb, item_emb[:max_itemid+1].permute(1, 0))    
+    #     scores = torch.matmul(seq_emb, item_emb[:max_itemid+1].permute(1, 0))    
         
-        return scores
+    #     return scores
 
-    def get_text_batch_logits(self, adj_t, x, mask, itemid, max_itemid, mode):
+    # def get_text_batch_logits(self, adj_t, x, mask, itemid, max_itemid, mode):
 
-        x = self.gcn.get_gnn_emb(adj_t, x, mode)
+    #     x = self.gcn.get_gnn_emb(adj_t, x, mode)
 
-        scores = self.get_batch_logit(x, mask, itemid, max_itemid)
-        return scores
+    #     scores = self.get_batch_logit(x, mask, itemid, max_itemid)
+    #     return scores
     
-    def get_pop_weight(self):
-        pop_weight = torch.sigmoid(-self.item_prob_list + 0.6)
+    # def get_pop_weight(self):
+    #     pop_weight = torch.sigmoid(-self.item_prob_list + 0.6)
         
-        return pop_weight, 1-pop_weight
+    #     return pop_weight, 1-pop_weight
 
     def get_text_score(self, xmap,itemid, mask, device, max_itemid, mode ):
         item_emb_feat = xmap[itemid]
@@ -383,7 +258,7 @@ class AlterRec(nn.Module):
 
 
     
-    def forward(self, x, uid, edge_index, max_itemid, itemid, mask, label_hard_neg_id=None, mask_hard_id=None, label_hard_neg_text=None, mask_hard_text=None, train_gnn=None, train_lm=None):
+    def forward(self, x,  max_itemid, itemid, mask, label_hard_neg_id=None, mask_hard_id=None, label_hard_neg_text=None, mask_hard_text=None, train_gnn=None, train_lm=None):
         
        
         device = itemid.device

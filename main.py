@@ -52,11 +52,6 @@ class SessionDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-
-
-
-
-
     def __getitem__(self, index):
         """
         data format:
@@ -267,7 +262,7 @@ def get_neg_mask(new_model, embs, browsed_ids,mask,  max_itemid, device, args,tr
 
 
 
-def train(model, new_model, optimizer, train_iter, x, edge_index, max_itemid, device, scheduler, args,  train_gnn, train_lm, epoch, train_mode, embs):
+def train(model, new_model, optimizer, train_iter, x, max_itemid, device, scheduler, args,  train_gnn, train_lm, train_mode, embs):
     model.train()
 
     res20 = []
@@ -324,8 +319,6 @@ def train(model, new_model, optimizer, train_iter, x, edge_index, max_itemid, de
        
 
         scores, out_gnn, out_text,_ , _, _= model(x.to(device),
-                      uid.to(device),
-                      edge_index.to(device),
                       max_itemid,
                       browsed_ids.to(device),
                       mask.to(device),
@@ -432,39 +425,6 @@ def train(model, new_model, optimizer, train_iter, x, edge_index, max_itemid, de
         total_loss_gnn += loss.item()
         total_loss_text += loss.item()
 
-        
-        ###
-        
-        # res20.append(scores.topk(20)[1].cpu())
-        # labels.append(label)
-        # torch.cuda.empty_cache()
-
-    ###
-    # labels = np.concatenate(labels)
-    # labels = labels.reshape(-1, 1)
-    # acc20, mrr20, ndcg20 = metrics(res20, labels)
-    # msg = 'Top-{} hit:{:.3f}, mrr:{:.4f}, ndcg:{:.4f} \n'.format(20, acc20 * 100, mrr20 * 100, ndcg20 * 100)
-    
-    # # if args.modulation !=  'Nor':
-    # acc20, mrr20, ndcg20 = metrics(res20_gnn, labels)
-    # msg += 'GNN loss: {},  Top-{} hit:{:.3f}, mrr:{:.4f}, ndcg:{:.4f} \n'.format(total_loss_gnn/total_examples, 20, acc20 * 100, mrr20 * 100, ndcg20 * 100)
-
-    # acc20, mrr20, ndcg20 = metrics(res20_text, labels)
-    # msg += 'Text loss: {}, Top-{} hit:{:.3f}, mrr:{:.4f}, ndcg:{:.4f} \n'.format(total_loss_text/total_examples, 20, acc20 * 100, mrr20 * 100, ndcg20 * 100)
-    
-    # if train_gnn == 1:
-            
-    #     with open(args.output_dir+'/id_loss.txt', 'a+') as f:
-    #         f.write(str(total_loss_gnn/total_examples)  + '\n')
-    #         f.flush()
-        
-    # if train_lm == 1:
-        
-    #     with open(args.output_dir+'/text_loss.txt', 'a+') as f:
-    #         f.write(str(total_loss_text/total_examples)  + '\n')
-    #         f.flush()
-
-
 
     msg = None
 
@@ -490,7 +450,7 @@ def metrics(res, labels):
 
 
 @torch.no_grad()
-def test(model, lm_mdoel, data_iter, edge_index, x, max_itemid, device, args):
+def test(model, data_iter, x, max_itemid, device, args):
     model.eval()
     
 
@@ -516,21 +476,19 @@ def test(model, lm_mdoel, data_iter, edge_index, x, max_itemid, device, args):
     res1_text = []
     
     fin_score, gnn_score, text_score = [], [], []
-    # for i, (uid, browsed_ids, label, mask) in enumerate(data_iter):
+   
     for uid, browsed_ids, label, mask, *aug in tqdm(data_iter):
          
        
-        # @profile
-        # def get_score(x, uid, edge_index, max_itemid, browsed_ids, mask):
+       
         scores, out_gnn, out_text, _, gnn_emb, lm_emb = model(x.to(device),
-                        uid.to(device),
-                    edge_index.to(device),
+                        
                     max_itemid,
                     browsed_ids.to(device),
                     mask.to(device)
                     )
         torch.cuda.empty_cache()
-            # return  scores, out_gnn, out_text, _, gnn_emb, lm_emb 
+         
        
         sub_scores = scores.topk(20)[1].cpu()
         res20.append(sub_scores)
@@ -744,65 +702,30 @@ def main():
     path = args.input_dir +'/' + args.data_name
 
    
-    if 'amazon' in args.data_name:
+    path = path + '/' + 'dist/text_embeddings'
 
-        ####### sentencebert
-        # path = path + '/' + 'sbert/lastlayer_finetune_text_embeddings'
-        ### sbert
-        # path = path + '/' + 'sbert/text_embeddings'   
-        #### mt5
-        # path = path + '/' + 'mt5/text_embeddings'
-
-        ### stsb-xlm-r-multilingual
-        # path = path + '/' + 'stsb/text_embeddings'
-
-        if 'UK' in args.data_name:
-            path = path + '/' + 'all_mini/text_embeddings'
-
-        else:
-            path = path + '/' + 'dist/text_embeddings'
-
-
-        
-        if os.path.exists(path+'/tax_embeddings.pkl'):
-            with open(path+'/tax_embeddings.pkl','rb') as f:
-                
-                tax_embedding =pickle.load(f)
+    if os.path.exists(path+'/tax_embeddings.pkl'):
+        with open(path+'/tax_embeddings.pkl','rb') as f:
             
-        else:
-            tax_embedding = None
-
-        with open(path+'/title_embeddings.pkl','rb') as f:
-            
-            title_embedding=pickle.load(f)
+            tax_embedding =pickle.load(f)
         
-        
-
-        with open(path+'/des_embeddings.pkl','rb') as f:
-            des_embedding=pickle.load(f)
-        
-        
-        
-        print(path)
-        print('load emebddings from fixed model !!')
-        if tax_embedding != None:
-            title_embedding = (tax_embedding + title_embedding + des_embedding)/3
-        else:
-            title_embedding = (title_embedding + des_embedding)/2
     else:
-    ####### finetune sentencebert
-       
-        embedding_path = 'output/0923/sbert_lastlayer_finetune/item_embeddings_ep12_iter0.pkl'
-    
-        with open(embedding_path,'rb') as f:
-            title_embedding = pickle.load(f)
+        tax_embedding = None
+
+    with open(path+'/title_embeddings.pkl','rb') as f:
         
-        print(embedding_path)
-        print('load emebddings!!')
-
+        title_embedding=pickle.load(f)
     
-
+    with open(path+'/des_embeddings.pkl','rb') as f:
+        des_embedding=pickle.load(f)
     
+    print(path)
+    print('load emebddings from fixed model !!')
+    if tax_embedding != None:
+        title_embedding = (tax_embedding + title_embedding + des_embedding)/3
+    else:
+        title_embedding = (title_embedding + des_embedding)/2
+   
 
 
     print('The size of train data:', len(train_data))
@@ -810,7 +733,7 @@ def main():
     print('The size of test data', len(test_data))
     
     # train_edge = construct_graph(args.data_name, args.input_dir, max_itemid, args.sample_size)
-    train_edge, G = construct_graph(args.data_name,  args.sample_size, args.input_dir,max_itemid)
+    # train_edge, G = construct_graph(args.data_name,  args.sample_size, args.input_dir,max_itemid)
    
     if 'amazonm2' in args.data_name :
         totle_node_num =   max_itemid + 1
@@ -829,7 +752,7 @@ def main():
                             num_workers=4,##4
                             shuffle=True,
                             pin_memory=False,
-                            # collate_fn=SessionDataset.collate_fn
+                           
                             )
     
 
@@ -838,7 +761,7 @@ def main():
                         num_workers=4, ##4
                         shuffle=False,
                         pin_memory=False,
-                        # collate_fn=SessionDataset.collate_fn
+                     
                         )
     
     val_iter = DataLoader(dataset=val_data,
@@ -846,23 +769,14 @@ def main():
                         num_workers=4, ##4
                         shuffle=False,
                         pin_memory=False,
-                        # collate_fn=SessionDataset.collate_fn
+                       
                        )
     
 
     metric20_val, metric10_val, metric5_val, metric50_val = [], [], [], []
     metric20_test, metric10_test, metric5_test, metric50_test = [], [], [], []
 
-    # hit20_total_out = open(args.output_dir+'/test_total_hit20.txt', 'w+')
-    # hit20_id_out = open(args.output_dir+'/test_id_hit20.txt', 'w+')
-    # hit20_text_out = open(args.output_dir+'/test_text_hit20.txt', 'w+')
-    # args.id_weight_file = open(args.output_dir+'/id_model_norm.txt', 'w+')
-                
-    # args.text_weight_file = open(args.output_dir+'/text_model_norm.txt', 'w+')
-    
-    # args.id_loss_file = open(args.output_dir+'/id_loss.txt', 'w+') 
-       
-    # args.text_loss_file =  open(args.output_dir+'/text_loss.txt', 'w+') 
+  
     
     for _ in range(1):
 
@@ -879,16 +793,12 @@ def main():
         train_gnn =1
         train_lm = 0
         
-        model = His_GNN(totle_node_num, item_num, args.id_hidden_channel, args.lm_hidden_channel, args.id_hidden_channel, args.num_layers, args.dropout,args, title_embedding, item_prob_list, train_edge)
+        model = AlterRec(totle_node_num, item_num, args.id_hidden_channel, args.lm_hidden_channel, args.id_hidden_channel, args.num_layers, args.dropout,args, title_embedding, item_prob_list)
        
-        # else:
-        # optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.l2)
+       
         optimizer1 = torch.optim.Adam(model.id_module.parameters(), lr=args.lr_id, weight_decay=args.l2)
         optimizer2 = torch.optim.Adam(model.text_module.parameters(), lr=args.lr_text, weight_decay=args.l2)
-        # optimizer = torch.optim.Adam([{'params': model.id_module.parameters(), 'lr': args.lr_gnn}, 
-        #                              {'params': model.text_module.parameters(), 'lr': args.lr_text}], 
-        #                              weight_decay=args.l2)
-
+       
         lm_model = None
 
         scheduler1 = torch.optim.lr_scheduler.StepLR(optimizer1, step_size=args.lr_dc_step_id, gamma=args.lr_dc)
@@ -1028,16 +938,16 @@ def main():
 
            
 
-            loss, _ = train(model,new_model, optimizer, train_hard_iter, title_embedding,  train_edge, max_itemid, device, scheduler, args, train_gnn, train_lm, epoch, train_mode=train_mode, embs=embs)
+            loss, _ = train(model,new_model, optimizer, train_hard_iter, title_embedding, max_itemid, device, scheduler, args, train_gnn, train_lm, train_mode=train_mode, embs=embs)
 
             # model.load_state_dict(torch.load('output/tmp/model_lr0.01_dp0.1_dim128.bin',  map_location='cpu'))
             
             # train_hit, train_info, metrics_train, _, _, _ = test(model, lm_model, train_hard_iter, train_edge,title_embedding, max_itemid, device, args)
 
 
-            val_hit, val_info, metrics_val, _, _ , _= test(model, lm_model, val_iter, train_edge,title_embedding, max_itemid, device, args)
+            val_hit, val_info, metrics_val, _, _ , _= test(model, val_iter,title_embedding, max_itemid, device, args)
 
-            test_hit, test_info, metrics_test, item_embs, score_list, hit20_list = test(model, lm_model, test_iter, train_edge, title_embedding, max_itemid, device, args)
+            test_hit, test_info, metrics_test, item_embs, score_list, hit20_list = test(model, test_iter, title_embedding, max_itemid, device, args)
 
             # with open(args.output_dir+'/test_total_hit20.txt', 'a+') as f:
             #     f.write(str(round(hit20_list[0],4).item()) + '\n')
