@@ -1,7 +1,7 @@
 
 # AlterRec
 
-Official code for the NeurIPS'23 paper "Enhancing ID and Text Fusion via Alternative Training in Session-based Recommendation".
+Official code for paper "Enhancing ID and Text Fusion via Alternative Training in Session-based Recommendation".
 
 # Download Data
 Please download the amazon-m2 dataset through this [link] (https://drive.google.com/file/d/180K8PtOi0Rgsi4MEYHYQD0pE1yhRDOiB/view?usp=sharing), put it in the `dataset` folder and unzip it.
