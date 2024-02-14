@@ -4,7 +4,7 @@
 Official code for paper "Enhancing ID and Text Fusion via Alternative Training in Session-based Recommendation".
 
 # Download Data
-Please download the amazon-m2 dataset through this [link] (https://drive.google.com/file/d/180K8PtOi0Rgsi4MEYHYQD0pE1yhRDOiB/view?usp=sharing), put it in the `dataset` folder and unzip it.
+Please download the amazon-m2 dataset through this [link](https://drive.google.com/file/d/180K8PtOi0Rgsi4MEYHYQD0pE1yhRDOiB/view?usp=sharing), put it in the `dataset` folder and unzip it.
 
 # Reproduce
 AlterRec without augmentation (sess_FR_text_FR: Amazon-French, sess_ES_text_ES: spanish, sess_IT_text_IT: Italian):
