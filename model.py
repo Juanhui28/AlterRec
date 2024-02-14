@@ -150,16 +150,10 @@ class AlterRec(nn.Module):
                  dropout, args,  feat=None, item_prob_list=None):
         super(AlterRec, self).__init__()
 
-        # self.convs = torch.nn.ModuleList()
-        # self.gcn = GCN(node_num,  id_in_channels, lm_in_channels, out_channels, num_layers, dropout, args, feat)
-
-       
         self.out_channels = out_channels
         
         self.dropout = dropout
-    
-        # self.alpha = torch.nn.Parameter(torch.FloatTensor([0, 0]))
-        
+   
         self.args= args
         self.feat = feat
         self.item_prob_list = item_prob_list
@@ -169,11 +163,6 @@ class AlterRec(nn.Module):
         self.text_module = Text_module(item_num, lm_in_channels, out_channels, args, dropout)
         self.linearlayer = torch.nn.Linear(2, 1)
 
-        
-       
-        
-        
-       
 
     def reset_parameters(self):
        
@@ -182,64 +171,9 @@ class AlterRec(nn.Module):
         for weight in self.parameters():
             weight.data.uniform_(-stdv, stdv)
         
-
+  
     
-    
-    # def get_item_attention(self, user_emb, item_emb, mask):
-    #     mask = mask.float().unsqueeze(-1)
-
-    def map_feat(self, feat, func):
-    
-        new_item = func(feat)
-        # new_item = F.relu(new_item)
-        # new_item = F.dropout(new_item, p=self.dropout, training=self.training)
-
-        return new_item
-    
-    # def scaled_dot_product(self, q, k, v, edge_index, dim_size, mask= None):
-    #     d = q.size()[-1]
-
-    #     attn_logits = (q*k).sum(dim=-1)
-    #     attn_logits = attn_logits/math.sqrt(d)
-
-    #     attention = softmax(attn_logits, edge_index[0])
-    #     values = attention.unsqueeze(1)*v
-    #     values = scatter_add(values, edge_index[0], dim=0, dim_size=dim_size)
-       
-
-    #     return values, attention
-    
-   
-        
-    # def cross_att(self, item_gnn_emb, x):
-        
-    #     d = item_gnn_emb.size()[-1]
-    #     x = self.map_feat(x, self.linearlayer1)
-    #     combine_emb = item_gnn_emb * x
-
-    # def get_batch_logit(self, item_emb, mask, itemid, max_itemid):
-
-        
-
-    #     seq_emb = torch.sum(mask.unsqueeze(2)*item_emb[itemid], 1)
-    #     seq_emb = seq_emb/(mask.sum(dim=1)).unsqueeze(1)
-
-    #     scores = torch.matmul(seq_emb, item_emb[:max_itemid+1].permute(1, 0))    
-        
-    #     return scores
-
-    # def get_text_batch_logits(self, adj_t, x, mask, itemid, max_itemid, mode):
-
-    #     x = self.gcn.get_gnn_emb(adj_t, x, mode)
-
-    #     scores = self.get_batch_logit(x, mask, itemid, max_itemid)
-    #     return scores
-    
-    # def get_pop_weight(self):
-    #     pop_weight = torch.sigmoid(-self.item_prob_list + 0.6)
-        
-    #     return pop_weight, 1-pop_weight
-
+  
     def get_text_score(self, xmap,itemid, mask, device, max_itemid, mode ):
         item_emb_feat = xmap[itemid]
 
@@ -295,11 +229,7 @@ class AlterRec(nn.Module):
         if self.training:
             scores = torch.tensor(0).to(device)
         else:
-            scores = self.args.beta1*(scores1) + self.args.beta2*(scores2)
-
-        #### concatnet scores:
-        # scores = torch.cat([scores1.unsqueeze(2), scores2.unsqueeze(2)], dim=-1)
-        # scores = self.map_feat(scores, self.linearlayer).squeeze(-1)
+            scores = self.args.alpha*(scores1) + (1-self.args.alpha)*(scores2)
 
        
 

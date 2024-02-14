@@ -15,7 +15,7 @@ import dgl
 
 
 from utils.tools import get_logger, get_config_dir, init_seed
-from data_loader.data_loader import load_data, construct_graph
+from data_loader.data_loader import load_data
 
 import torch.nn.functional as F
 from model import AlterRec
@@ -89,45 +89,12 @@ class SessionDataset(Dataset):
         return uid, browsed_ids, label, mask
          
 
-def adjust_gradient(model, out_gnn, out_text, label, args):
-    softmax = nn.Softmax(dim=1)
-    relu = nn.ReLU(inplace=True)
-    tanh = nn.Tanh()
-
-    sf_score_gnn = softmax(out_gnn)
-    sf_score_text = softmax(out_text)
-    score_gnn = sum([sf_score_gnn[i][label[i]] for i in range(out_gnn.size(0))])
-    score_text = sum([sf_score_text[i][label[i]] for i in range(out_text.size(0))])
-
-    ratio_gnn = score_gnn / score_text
-    ratio_text = 1 / ratio_gnn
-
-    if ratio_gnn > 1:
-        coeff_gnn = 1 - tanh(args.alpha * relu(ratio_gnn))
-        coeff_text = 1
-    else:
-        coeff_text = 1 - tanh(args.alpha * relu(ratio_text))
-        coeff_gnn = 1
-
-    
-
-    return coeff_gnn, coeff_text
-
 @torch.no_grad()
 def get_score(model, x, itemid,mask,max_itemid, device, mode ):
     model.eval()
     if mode == 'gnn':
 
-        ##### no transformer
-        # item_emb = x[itemid]
-
-        # seq_emb = torch.sum(mask.unsqueeze(2)*item_emb, 1)
-        # seq_emb = seq_emb/(mask.sum(dim=1)).unsqueeze(1)
-        # session_emb = seq_emb 
-        # item_embs = x[:max_itemid+1]
-
-        # scores_all = torch.matmul(session_emb, item_embs.permute(1, 0))  
-
+        
         ### use transformer
         scores_all = model.get_text_score(x.to(device),itemid.to(device), mask.to(device), device, max_itemid , mode='gnn')
         scores_all = scores_all.cpu()
@@ -265,30 +232,18 @@ def get_neg_mask(new_model, embs, browsed_ids,mask,  max_itemid, device, args,tr
 def train(model, new_model, optimizer, train_iter, x, max_itemid, device, scheduler, args,  train_gnn, train_lm, train_mode, embs):
     model.train()
 
-    res20 = []
-    labels = []
     total_loss = total_examples = 0
     total_loss_gnn = total_loss_text = 0
-    res20_gnn = []
-    res20_text = []
+    
 
     optimizer1, optimizer2 = optimizer
     scheduler1, scheduler2 = scheduler
 
     
     i = 0
-    # for i, (uid, browsed_ids, label_ori, mask, hard_neg, mask_hard) in enumerate(train_iter):
+   
     for uid, browsed_ids, label_ori, mask, aug_hard in tqdm(train_iter):
-        # weights = {name: param for name, param in model.named_parameters()}
-
-        # if train_gnn == 1 and i == 0:
-        #     args.id_weight_file.write(str(torch.norm(id_weight).item())  + '\n')
-        #     args.id_weight_file.flush()
-            
-        #     args.text_weight_file.write(str(torch.norm(text_weight).item()) + '\n')
-        #     args.text_weight_file.flush()
-
-
+      
         optimizer1.zero_grad()
         optimizer2.zero_grad()
 
@@ -305,10 +260,7 @@ def train(model, new_model, optimizer, train_iter, x, max_itemid, device, schedu
         else:
             train_mode_id, train_mode_text = train_mode
             embs_id, embs_text = embs
-            # hard_sam = get_neg( new_model, embs, browsed_ids,mask,  max_itemid, device, args, mode=train_mode)
-            # hard_neg = torch.cat([label_ori, hard_sam], dim=-1)
-            # mask_hard = (hard_sam == label_ori)
-            # mask_hard = torch.cat([torch.zeros(label_ori.size(0)).unsqueeze(1).bool(), mask_hard], dim=-1)
+          
             if train_gnn == 1:
                 hard_neg_id, mask_hard_id = get_neg_mask(new_model, embs_id, browsed_ids,mask,  max_itemid, device, args,train_mode_id, label_ori )
                 
@@ -356,17 +308,13 @@ def train(model, new_model, optimizer, train_iter, x, max_itemid, device, schedu
         
         if train_gnn == 1:
             if i == 0: print('train gnn')
-            # import ipdb
-            # ipdb.set_trace()
+           
             loss = L(out_gnn_noaug, label_noaug.to(device).squeeze())
 
             if aug_hard.sum() > 0:
                 if i == 0: print('aug gnn')
                 loss_aug =  L(out_gnn_aug, label_aug.to(device).squeeze())
-                # if epoch >=2 :
-                #     print('gnn loss:', loss)
-                #     print('gnn aug loss:', loss_aug)
-
+                
                 loss += args.aug_loss_ratio*loss_aug
             
             
@@ -380,42 +328,15 @@ def train(model, new_model, optimizer, train_iter, x, max_itemid, device, schedu
             if aug_hard.sum() > 0:
                 if i == 0: print('aug text')
                 loss_aug =  L(out_text_aug, label_aug.to(device).squeeze())
-                # if epoch >=2 :
-                #     print('text loss:', loss)
-                #     print('text aug loss:', loss_aug)
                 loss += args.aug_loss_ratio*loss_aug
 
             
 
         i += 1
 
-
-      
-
         loss.backward()
 
-        if args.modulation !=  'Normal':
-            coeff_gnn, coeff_text = adjust_gradient(model, out_gnn, out_text, label, args)
-            for name, parms in model.named_parameters():
-                
-                if 'gcn' in name and parms.grad != None:
-                    if args.modulation == 'OGM_GE':  # bug fixed
-                        parms.grad = parms.grad * coeff_gnn + \
-                                                    torch.zeros_like(parms.grad).normal_(0, parms.grad.std().item() + 1e-8)
-                    elif args.modulation == 'OGM':
-                        parms.grad *= coeff_gnn
-                elif 'linearlayer1' in name and parms.grad != None:
-                    if args.modulation == 'OGM_GE':  # bug fixed
-                        parms.grad = parms.grad * coeff_text + \
-                                        torch.zeros_like(parms.grad).normal_(0, parms.grad.std().item() + 1e-8)
-                    elif args.modulation == 'OGM':
-                        parms.grad *= coeff_text
-
-        
-
-        res20_gnn.append(out_gnn.topk(20)[1].cpu())
-        res20_text.append(out_text.topk(20)[1].cpu())
-
+       
         optimizer1.step()
         optimizer2.step()
 
@@ -519,13 +440,7 @@ def test(model, data_iter, x, max_itemid, device, args):
             fin_score.append(scores.cpu())
             gnn_score.append(out_gnn.cpu())
             text_score.append(out_text.cpu())
-            # return res20, res10, res5, res50, labels, res20_gnn, res10_gnn, res50_gnn, res5_gnn, res20_text, res10_text, res50_text, res5_text, fin_score, gnn_score, text_score
-
-        # scores, out_gnn, out_text, _, gnn_emb, lm_emb  = get_score(x, uid, edge_index, max_itemid, browsed_ids, mask)
-        # res20, res10, res5, res50, labels, res20_gnn, res10_gnn, res50_gnn, res5_gnn, res20_text, res10_text, res50_text, res5_text, fin_score, gnn_score, text_score = get_metric(scores, label, out_gnn, out_text)
-
-    # 8450,1,   8450,50
-            
+         
     hit20 = []
     labels = np.concatenate(labels)
     labels = labels.reshape(-1, 1)
@@ -536,13 +451,7 @@ def test(model, data_iter, x, max_itemid, device, args):
     acc1, mrr1, ndcg1 = metrics(res1, labels)
     acc3, mrr3, ndcg3 = metrics(res3, labels)
 
-    # if eval_mode == 'val': print('validation performance')
-    # else: print('test performance')
-    # print("Top50 : acc {} , mrr {}, ndcg {}".format(acc50, mrr50, ndcg50))
-    # print("Top20 : acc {} , mrr {}, ndcg {}".format(acc20, mrr20, ndcg20))
-    # print("Top10 : acc {} , mrr {}, ndcg {}".format(acc10, mrr10, ndcg10))
-    # print("Top5 : acc {} , mrr {}, ndcg {}".format(acc5, mrr5, ndcg5))
-
+  
     print('score id norm/lm norm: ', torch.norm(out_gnn, p=2).item(), torch.norm(out_text, p=2).item())
     msg = 'Top-{} hit:{:.3f}, mrr:{:.4f}, ndcg:{:.4f} \n'.format(20, acc20 * 100, mrr20 * 100, ndcg20 * 100)
     msg += 'Top-{} hit:{:.3f}, mrr:{:.4f}, ndcg:{:.4f} \n'.format(1, acc1 * 100, mrr1 * 100, ndcg1 * 100)
@@ -623,58 +532,51 @@ def get_last_epoch(model):
 
 def main():
     parser = argparse.ArgumentParser(description='sessionRec')
-    parser.add_argument('--data_name', type=str, default='user_item_title_des') ##choices='amazonm2/sess_UK_text_UK_full/, amazonm2/sess_ES_text_ES/, user_item_title_des'
+    parser.add_argument('--data_name', type=str, default='amazonm2/sess_FR_text_FR/') 
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--input_dir', type=str, default='./dataset')
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--runs', type=int, default=3)
     parser.add_argument('--output_dir', type=str, default='output')
 
     parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--test_batch_size', type=int, default=512*16)
-    parser.add_argument('--epoch', type=int, default=20) 
-    parser.add_argument('--id_hidden_channel', type=int, default=128)
+    parser.add_argument('--epoch', type=int, default=30) 
+    parser.add_argument('--id_hidden_channel', type=int, default=300)
     parser.add_argument('--lm_hidden_channel', type=int, default=512)
     parser.add_argument('--num_layers', type=int, default=1)
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--l2', type=float, default=0.)
-    parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--kill_cnt', type=int, default=15)
-    parser.add_argument('--lr_dc_step_id', type=int, default=3)
-    parser.add_argument('--lr_dc_step_text', type=int, default=3)
+    parser.add_argument('--lr_dc_step_id', type=int, default=2)
+    parser.add_argument('--lr_dc_step_text', type=int, default=5)
     parser.add_argument('--lr_dc', type=float, default=0.1)
-    parser.add_argument('--max_len', type=int, default=10)
+    parser.add_argument('--max_len', type=int, default=50)
     parser.add_argument('--max_his', type=int, default=10)
     parser.add_argument('--sample_size', type=int, default=12)
 
-    parser.add_argument('--text_input_gnn', action='store_true', help='use the text embedding as the input to the gnn')
     parser.add_argument('--save', action='store_true')
-    parser.add_argument('--finetune', action='store_true')
-
-    ### adjust gradients:
-    parser.add_argument('--alpha',  type=float,default=0.1, help='alpha in OGM-GE')
-    parser.add_argument('--modulation', default='Normal', type=str,
-                        choices=['Normal', 'OGM', 'OGM_GE'])
+    parser.add_argument('--aug', action='store_true')
+    
+    ### 
+    
     parser.add_argument('--lr_id', type=float, default=0.001)
     parser.add_argument('--lr_text', type=float, default=0.001)
 
     parser.add_argument("--num_attention_heads", type=int, default=2)
     parser.add_argument("--transformer_block", type=int, default=2)
-    # parser.add_argument('--text_input_gnn', action='store_true', default=True, help='use the text embedding as the input to the gnn')
-    # parser.add_argument('--finetune', action='store_true', default=True,)
     parser.add_argument('--full_neg', action='store_true', help='use the full neg or not')
     parser.add_argument('--only_train_id', action='store_true')
     parser.add_argument('--only_train_text', action='store_true')
 
     ### iterative train
-    parser.add_argument("--end_rank", type=int, default=5000)
-    parser.add_argument("--start_rank", type=int, default=50)
-    parser.add_argument("--start_pos_rank", type=int, default=1)
+    parser.add_argument("--end_rank", type=int, default=20000)
+    parser.add_argument("--start_rank", type=int, default=20)
+    parser.add_argument("--start_pos_rank", type=int, default=0)
     parser.add_argument("--end_pos_rank", type=int, default=5)
-    parser.add_argument("--aug_loss_ratio", type=float, default=0.1)
-    parser.add_argument("--gap_epoch", type=int, default=2)
-    parser.add_argument("--beta1", type=float, default=0.5)
-    parser.add_argument("--beta2", type=float, default=0.5)
-
+    parser.add_argument("--aug_loss_ratio", type=float, default=0.5)
+    parser.add_argument("--random_epoch", type=int, default=2)
+    parser.add_argument("--alpha", type=float, default=0.5)
 
     #### adaptor
     parser.add_argument("--n_exps", type=int, default=8)
@@ -682,7 +584,7 @@ def main():
     parser.add_argument("--adaptor_dropout_prob", type=float, default=0.2)
     parser.add_argument("--temperature", type=float, default=0.07)
 
-    parser.add_argument('--id_module', type=str, default='average') ### transformer
+    parser.add_argument('--id_module', type=str, default='transformer') ### transformer
 
 
     
@@ -732,9 +634,7 @@ def main():
     print('The size of valid data',len(val_data))
     print('The size of test data', len(test_data))
     
-    # train_edge = construct_graph(args.data_name, args.input_dir, max_itemid, args.sample_size)
-    # train_edge, G = construct_graph(args.data_name,  args.sample_size, args.input_dir,max_itemid)
-   
+  
     if 'amazonm2' in args.data_name :
         totle_node_num =   max_itemid + 1
     else:
@@ -778,7 +678,7 @@ def main():
 
   
     
-    for _ in range(1):
+    for run in range(args.runs):
 
         best_hit = 0
         best_msg = ''
@@ -787,19 +687,20 @@ def main():
         best_metric_val =  0
         best_metric_test =  0
 
-        seed = args.seed
+        if args.runs > 1:
+            seed = run
+        else:
+            seed = args.seed
+
         init_seed(seed)
         print('seed: ', seed)
-        train_gnn =1
-        train_lm = 0
+        
         
         model = AlterRec(totle_node_num, item_num, args.id_hidden_channel, args.lm_hidden_channel, args.id_hidden_channel, args.num_layers, args.dropout,args, title_embedding, item_prob_list)
-       
        
         optimizer1 = torch.optim.Adam(model.id_module.parameters(), lr=args.lr_id, weight_decay=args.l2)
         optimizer2 = torch.optim.Adam(model.text_module.parameters(), lr=args.lr_text, weight_decay=args.l2)
        
-        lm_model = None
 
         scheduler1 = torch.optim.lr_scheduler.StepLR(optimizer1, step_size=args.lr_dc_step_id, gamma=args.lr_dc)
         scheduler2 = torch.optim.lr_scheduler.StepLR(optimizer2, step_size=args.lr_dc_step_text, gamma=args.lr_dc)
@@ -809,25 +710,22 @@ def main():
 
         model.reset_parameters()
 
-        
         model = model.to(device)
         
         print('start training, seed: ', seed)
 
-     
-        item_text_embed = None
-    
-        # sess2neg_gnn, _ = get_hard_neg(model, train_iter, item_text_embed, max_itemid, args, device, mode='gnn', rank_mode='ori') 
-        
         train_data_sess = SessionDataset(train_data, max_itemid, args.max_len, args.max_his , mode='hard')
         train_hard_iter = DataLoader(dataset=train_data_sess,
                         batch_size=args.batch_size,
                         num_workers=4,##4
                         shuffle=True,
                         pin_memory=False,
-                        # collate_fn=SessionDataset.collate_fn
+                        
                     )
         
+        train_gnn =1
+        train_lm = 0
+
         if args.only_train_id:
             train_gnn = 1
             train_lm=0
@@ -837,8 +735,6 @@ def main():
         else:
             train_gnn = 1
             train_lm=0
-
-
 
         train_mode_id = train_mode_text  = 'random'
         embs_id = None
@@ -851,7 +747,7 @@ def main():
 
         for epoch in range(args.epoch):
                
-            # if  epoch >= args.gap_epoch and (not args.only_train_id) and (not args.only_train_text) : 
+          
             if  train_gnn == 1  and epoch > 0 and (not args.only_train_id) and (not args.only_train_text) and epoch % 2 == 0:
                     
                 item_gnn_embed = item_embs[0].cpu()
@@ -861,28 +757,27 @@ def main():
                 train_lm = 1
                 
 
-                if epoch >= args.gap_epoch:
-                    # new_pos_sample = get_pos(model, train_iter,  item_embs[1].cpu(), max_itemid, args, device, mode='text')
-                
-                    # new_pos_sample  = get_pos(new_model, train_iter, item_gnn_embed, max_itemid, args, device, mode='gnn')
-                
+                if epoch >= args.random_epoch:
+                    
+                    if args.aug:
+                        new_pos_sample  = get_pos(new_model, train_iter, item_gnn_embed, max_itemid, args, device, mode='gnn')
+                    
 
-                    # print('get hard neg from gnn. train text!!!!')
-                    # train_data_new = train_data + new_pos_sample
-                    # train_data_sess = SessionDataset(train_data_new, max_itemid, args.max_len, args.max_his, mode='hard')
-                    # train_hard_iter = DataLoader(dataset=train_data_sess,
-                    #                 batch_size=args.batch_size,
-                    #                 num_workers=4,##4
-                    #                 shuffle=True,
-                    #                 pin_memory=False,
-                    #                 # collate_fn=SessionDataset.collate_fn
-                    #             )
+                        print('get hard neg from gnn. train text!!!!')
+                        train_data_new = train_data + new_pos_sample
+                        train_data_sess = SessionDataset(train_data_new, max_itemid, args.max_len, args.max_his, mode='hard')
+                        train_hard_iter = DataLoader(dataset=train_data_sess,
+                                        batch_size=args.batch_size,
+                                        num_workers=4,##4
+                                        shuffle=True,
+                                        pin_memory=False,
+                                      
+                                    )
                     
                     train_mode_text = 'gnn+random'
                     embs_text = item_embs
 
-                    # train_mode_text = 'gnn'
-                    # embs_text = item_gnn_embed
+                 
 
                 else:
                     train_mode_text = 'random'
@@ -894,41 +789,28 @@ def main():
                 train_gnn = 1
                 train_lm = 0
 
-                if epoch >= args.gap_epoch:
+                if epoch >= args.random_epoch:
 
-                    # new_pos_sample = get_pos(model, train_iter,  item_embs[1].cpu(), max_itemid, args, device, mode='text')
-                
-                    # new_pos_sample = get_pos(new_model, train_iter, item_embs[0].cpu(), max_itemid, args, device, mode='gnn')
+                  
+                    if args.aug:
+                        new_pos_sample = get_pos(new_model, train_iter, item_embs[0].cpu(), max_itemid, args, device, mode='gnn')
+                       
+       
+                        print('get hard neg from text. train gnn!!!!')
+                        train_data_new = train_data + new_pos_sample
+                        train_data_sess = SessionDataset(train_data_new, max_itemid, args.max_len, args.max_his, mode='hard')
+                        train_hard_iter = DataLoader(dataset=train_data_sess,
+                                        batch_size=args.batch_size,
+                                        num_workers=4,##4
+                                        shuffle=True,
+                                        pin_memory=False,
+                                        
+                                    )
                     
                     
-                    # print('get hard neg from text. train gnn!!!!')
-                    # train_data_new = train_data + new_pos_sample
-                    # train_data_sess = SessionDataset(train_data_new, max_itemid, args.max_len, args.max_his, mode='hard')
-                    # train_hard_iter = DataLoader(dataset=train_data_sess,
-                    #                 batch_size=args.batch_size,
-                    #                 num_workers=4,##4
-                    #                 shuffle=True,
-                    #                 pin_memory=False,
-                    #                 # collate_fn=SessionDataset.collate_fn
-                    #             )
-                
-                    # train_mode_id = 'gnn+text'
-                    # embs_id = item_embs
                 
                     train_mode_id = 'text+random'
                     embs_id = item_embs
-
-                    # train_mode_id = 'gnn+random'
-                    # embs_id = item_embs
-
-
-                    # train_mode_id = 'gnn'
-                    # embs_id =  item_embs[0].cpu()
-
-                    # train_mode_id = 'text'
-                    # embs_id =  item_embs[1].cpu()
-
-                    # train_mode_id = 'random'
 
                 else:
                     train_mode_id = 'random'
@@ -940,36 +822,10 @@ def main():
 
             loss, _ = train(model,new_model, optimizer, train_hard_iter, title_embedding, max_itemid, device, scheduler, args, train_gnn, train_lm, train_mode=train_mode, embs=embs)
 
-            # model.load_state_dict(torch.load('output/tmp/model_lr0.01_dp0.1_dim128.bin',  map_location='cpu'))
-            
-            # train_hit, train_info, metrics_train, _, _, _ = test(model, lm_model, train_hard_iter, train_edge,title_embedding, max_itemid, device, args)
-
 
             val_hit, val_info, metrics_val, _, _ , _= test(model, val_iter,title_embedding, max_itemid, device, args)
 
             test_hit, test_info, metrics_test, item_embs, score_list, hit20_list = test(model, test_iter, title_embedding, max_itemid, device, args)
-
-            # with open(args.output_dir+'/test_total_hit20.txt', 'a+') as f:
-            #     f.write(str(round(hit20_list[0],4).item()) + '\n')
-            #     f.flush()
-            
-            # with open(args.output_dir+'/test_id_hit20.txt', 'a+') as f:
-            #     f.write(str(round(hit20_list[1],4).item()) + '\n')
-            #     f.flush()
-            
-            # with open(args.output_dir+'/test_text_hit20.txt', 'a+') as f:
-            #     f.write(str(round(hit20_list[2],4).item()) + '\n')
-            #     f.flush()
-            
-            # msg = f'run [{seed}] epoch[{epoch}]  val :{val_info}'
-            # log_print.info(msg)
-
-            # msg = f'run [{seed}] epoch[{epoch}] test :{test_info}'
-            # log_print.info(msg)
-
-            
-            # msg = f'run [{seed}] epoch[{epoch}] loss {loss} train :{train_info}'
-            # log_print.info(msg)
 
             
             msg = f'run [{seed}] epoch[{epoch}] loss {loss} val :{val_info}'
@@ -978,7 +834,6 @@ def main():
             msg = f'run [{seed}] epoch[{epoch}] loss {loss} test :{test_info}'
             log_print.info(msg)
 
-            
         
             
             if val_hit > best_hit:
@@ -997,14 +852,11 @@ def main():
                     torch.save(score_list, args.output_dir+'/scores_lr'+str(args.lr)+'_dp'+str(args.dropout)+'_dim'+str(args.id_hidden_channel)) 
 
             else:
-                # msg = f'epoch[{epoch}] test :{test_info}'
                 
-                # log_print.info(msg)
                 kill += 1
                 if kill >= args.kill_cnt:
                     log_print.info('Early stop: No more improvement')
-                    # log_print.info(best_val_meg)
-                    # log_print.info(best_msg)
+                   
                     
                     break
             log_print.info(best_val_meg)
@@ -1014,7 +866,6 @@ def main():
         log_print.info(best_val_meg)
         log_print.info(best_msg)
 
-        # metrics = [metric20, metric10, metric5, metric50]
         metric20_val.append(best_metric_val[0])
         metric10_val.append(best_metric_val[1])
         metric5_val.append(best_metric_val[2])
@@ -1036,11 +887,6 @@ def main():
     print('test performance:')
     print(msg_test)
     
-
-
-    
-
-
  
 
 if __name__ == "__main__":
